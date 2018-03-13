@@ -5,8 +5,6 @@ const querystring = require('querystring');
 
 var emitter = new EventEmitter();
 
-var clientId = 0;
-var clients = {}; // <- Keep a map of attached clients
 var listeners = {}; // <- Keep a map of attached clients per resource
 
 const server = http2.createSecureServer({
@@ -32,20 +30,24 @@ function onRequest (req, res) {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Access-Control-Allow-Origin', '*');
 
+  // Fetch uri by its query parameter
   var resource = querystring.parse(req.headers[':path'])['uri'] || querystring.parse(req.headers[':path'])['/?uri'];
-  if (!listeners[resource]) listeners[resource] = [];
 
+  // Only add once a listener for a resource
+ if (listeners[resource] == null) {
+   listeners[resource] = [];
+    emitter.on(resource, function (data) {
+      for (var i = 0; i < listeners[resource].length; i++) {
+        listeners[resource][i].write('data:'+ data + '\n\n');
+      }
+    });
+  }
 
-   (function(clientId) {
-            clients[clientId] = res;  // <- Add this client to those we consider "attached"
-            listeners[resource].push(clientId);
-            req.on("close", function(){delete clients[clientId]; listeners[resource].pop(clientId)});  // <- Remove this client when he disconnects
-    })(++clientId)
+  // Add the response object to retrieve updates for this resource
+  listeners[resource].push(res);
 
-  // The resource the client wishes to retrieve events from
-  emitter.on(resource, function (data) {
-    for (var i = 0; i < listeners[resource].length; i++) {
-         clients[listeners[resource]].write('data:'+ data + '\n\n');       
-    }
-  });
+  // Remove the response object when disconnecting
+  req.on("close", function() { 
+    listeners[resource].pop(res);
+  });  // <- Remove this client when he disconnects
 }
